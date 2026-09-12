@@ -1,0 +1,11 @@
+# Environment & Credentials
+.env
+credentials.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Local test copies
+*.xlsx
