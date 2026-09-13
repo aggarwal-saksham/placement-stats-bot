@@ -50,7 +50,7 @@ Convert unstructured placement text into structured JSON.
   "companies": [
     {
       "Company": "Company Name (use standard abbreviations e.g. WWT)",
-      "CGPA_criteria": 7.5 (float or null),
+      "CGPA_criteria": 7.5 (float or null, 0 is not null, default value 0 if unstated),
       "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO",
       "Role": "Job Title",
       "Count": null (float or null),
