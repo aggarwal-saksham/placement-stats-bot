@@ -58,7 +58,7 @@ Convert unstructured placement text into structured JSON.
       "Base_in_LPA": 17.0 (float or null),
       "Stipend_in_K": 110.0 (float in thousands or null e.g. 110.0 for Rs 1,10,000),
       "Category": "TECH" | "NON TECH" | "CORE",
-      "Comments": "Location / Breakdown notes or null"
+      "Comments": "Location if given or ctc breakdown or both/ leave null if unstated"
     }
   ],
   "students": [

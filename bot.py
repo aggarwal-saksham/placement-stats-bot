@@ -2,6 +2,8 @@ import logging
 import json
 import os
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Ensure UTF-8 stdout encoding on Windows
 if sys.platform == "win32":
@@ -17,6 +19,33 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 PENDING_PARSES = {}
 
+# ----------------------------------------------------
+# Lightweight Health Check Web Server for Render
+# ----------------------------------------------------
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Placement Stats Bot is running 24/7!")
+
+    def log_message(self, format, *args):
+        return  # Silence routine HTTP access logs
+
+def start_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server_address = ('', port)
+    httpd = HTTPServer(server_address, HealthCheckHandler)
+    print(f"🌐 Health check HTTP server listening on port {port} for Render...")
+    httpd.serve_forever()
+
+# Start HTTP server in background thread for Render health checks
+threading.Thread(target=start_health_check_server, daemon=True).start()
+
+
+# ----------------------------------------------------
+# Telegram Bot Core
+# ----------------------------------------------------
 class PlacementBot:
     def __init__(self):
         self.ai_extractor = AIExtractor(GEMINI_API_KEY)
