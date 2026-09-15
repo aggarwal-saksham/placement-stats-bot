@@ -8,13 +8,17 @@ class CompanyRecord(BaseModel):
     Company: str
     CGPA_criteria: Optional[float] = None
     Offer_Type: Optional[str] = "FTE"
-    Role: str
+    Role: Optional[str] = None
     Count: Optional[float] = None
     CTC_in_LPA: Optional[float] = None
     Base_in_LPA: Optional[float] = None
     Stipend_in_K: Optional[float] = None
-    Category: str = "TECH"
+    Category: Optional[str] = "TECH"
     Comments: Optional[str] = None
+
+    @field_validator("Role", mode="before")
+    def default_role(cls, v):
+        return v if v else None
 
     @field_validator("Offer_Type", mode="before")
     def default_offer_type(cls, v):
@@ -30,6 +34,10 @@ class StudentRecord(BaseModel):
     Company: str
     Role: Optional[str] = None
     Offer_Type: Optional[str] = "FTE"
+
+    @field_validator("Role", mode="before")
+    def default_role(cls, v):
+        return v if v else None
 
     @field_validator("Offer_Type", mode="before")
     def default_offer_type(cls, v):
@@ -52,7 +60,7 @@ Convert unstructured placement text into structured JSON.
       "Company": "Company Name (use standard abbreviations e.g. WWT)",
       "CGPA_criteria": 7.5 (float or null),
       "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO",
-      "Role": "Job Title",
+      "Role": "Job Title (or null if unstated)",
       "Count": null (float or null),
       "CTC_in_LPA": 23.0 (float or null, higher if range given),
       "Base_in_LPA": 17.0 (float or null),
@@ -99,7 +107,7 @@ class AIExtractor:
         ]
         last_error = None
 
-        # Primary: google.genai SDK
+        # 1. Try google.genai SDK (New Google GenAI SDK)
         try:
             from google import genai
             from google.genai import types
@@ -123,7 +131,7 @@ class AIExtractor:
         except Exception as e1:
             last_error = e1
 
-        # Fallback: google.generativeai SDK if installed
+        # 2. Try google.generativeai SDK (Legacy SDK fallback)
         if not raw_json_str:
             try:
                 import google.generativeai as genai_old

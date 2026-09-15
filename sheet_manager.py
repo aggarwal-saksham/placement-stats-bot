@@ -47,11 +47,17 @@ class SheetManager:
         raw_company = company_dict.get('Company', '').strip()
         exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
 
+        # If role missing in company announcement, check if company already exists in Companies sheet
+        role = company_dict.get('Role')
+        if not role or str(role).strip().lower() in ['', 'none', 'null', 'nan']:
+            existing_roles = self.company_matcher.find_roles_for_company(exact_company_name)
+            role = existing_roles[0] if existing_roles else ""
+
         row_data = [
             exact_company_name,
             company_dict.get('CGPA_criteria'),
             company_dict.get('Offer_Type', 'FTE'),
-            company_dict.get('Role', ''),
+            role,
             company_dict.get('Count'),
             company_dict.get('CTC_in_LPA'),
             company_dict.get('Base_in_LPA'),
@@ -73,12 +79,14 @@ class SheetManager:
         self.refresh_matchers()
         processed = dict(company_dict)
         processed['Company'] = exact_company_name
+        processed['Role'] = role
         return processed
 
     def append_student_record(self, student_dict: dict) -> dict:
         """
         Appends a Student record into Students sheet.
         Replaces Company name with EXACT matching string from Companies sheet so XLOOKUP works 100%.
+        Auto-fetches Role from Companies sheet if unstated.
         Appends ONLY [Roll No, Name, Company, Role, Offer Type].
         Leaves CGPA, Stipend, CTC, Base, Category, Branch, Count BLANK for ArrayFormulas to calculate.
         """
@@ -86,14 +94,14 @@ class SheetManager:
         # Strictly match exact string present in Companies sheet
         exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
 
-        # 1. Role Fallback: If role missing or unstated, check Companies sheet for registered roles
+        # 1. Dynamic Role Auto-Fetch from Companies Sheet
         role = student_dict.get('Role')
         if not role or str(role).strip().lower() in ['', 'none', 'null', 'nan', 'auto-fetch']:
             existing_roles = self.company_matcher.find_roles_for_company(exact_company_name)
             if existing_roles:
-                role = existing_roles[0]  # Auto-fill single/primary registered role from Companies sheet
+                role = existing_roles[0]  # Auto-fetch exact registered role from Companies sheet!
             else:
-                role = "Software Engineer"  # Generic fallback if company not registered in sheet yet
+                role = ""  # Leave empty if company not found in Companies sheet yet (no hardcoded assumptions!)
 
         # 2. CGPA_Master Roll No / Name Auto-Lookup
         enriched = self.student_lookup.enrich_student_data(
