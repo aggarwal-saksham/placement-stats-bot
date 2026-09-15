@@ -6,8 +6,6 @@ from student_lookup import StudentLookup
 class SheetManager:
     def __init__(self, excel_path=None, google_sheet_credentials=None, google_sheet_url=None):
         self.excel_path = excel_path or r"C:\Users\DELL\Downloads\2027 unoff stats (1).xlsx"
-        self.company_matcher = CompanyMatcher(self.excel_path)
-        self.student_lookup = StudentLookup(self.excel_path)
         self.use_google_sheets = False
         self.gspread_client = None
         self.spreadsheet = None
@@ -23,10 +21,23 @@ class SheetManager:
             except Exception as e:
                 print("Failed to initialize Google Sheets, falling back to local Excel mode:", e)
 
+        self.refresh_matchers()
+
     def refresh_matchers(self):
-        """Reload matchers from current spreadsheet/excel data."""
-        self.company_matcher = CompanyMatcher(self.excel_path)
-        self.student_lookup = StudentLookup(self.excel_path)
+        """Reload matchers from current Google Sheets or Excel data."""
+        if self.use_google_sheets and self.spreadsheet:
+            try:
+                comp_ws = self.spreadsheet.worksheet("Companies")
+                master_ws = self.spreadsheet.worksheet("CGPA_Master")
+                self.company_matcher = CompanyMatcher(gspread_worksheet=comp_ws)
+                self.student_lookup = StudentLookup(gspread_worksheet=master_ws)
+                return
+            except Exception as e:
+                print("Error refreshing matchers from Google Sheets:", e)
+        
+        # Fallback to local Excel
+        self.company_matcher = CompanyMatcher(excel_path=self.excel_path)
+        self.student_lookup = StudentLookup(excel_path=self.excel_path)
 
     def append_company_record(self, company_dict: dict) -> dict:
         """
@@ -75,14 +86,14 @@ class SheetManager:
         # Strictly match exact string present in Companies sheet
         exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
 
-        # 1. Role Fallback: If role missing, check Companies sheet for single matching role
+        # 1. Role Fallback: If role missing or unstated, check Companies sheet for registered roles
         role = student_dict.get('Role')
-        if not role or str(role).lower() in ['none', 'null', 'nan', 'auto-fetch']:
+        if not role or str(role).strip().lower() in ['', 'none', 'null', 'nan', 'auto-fetch']:
             existing_roles = self.company_matcher.find_roles_for_company(exact_company_name)
-            if len(existing_roles) >= 1:
+            if existing_roles:
                 role = existing_roles[0]  # Auto-fill single/primary registered role from Companies sheet
             else:
-                role = "Software Engineer"  # Default fallback if company not found in sheet yet
+                role = "Software Engineer"  # Generic fallback if company not registered in sheet yet
 
         # 2. CGPA_Master Roll No / Name Auto-Lookup
         enriched = self.student_lookup.enrich_student_data(
@@ -92,7 +103,7 @@ class SheetManager:
 
         roll_no = enriched.get('Roll No', '')
         name = enriched.get('Name', '')
-        offer_type = student_dict.get('Offer_Type', 'FTE')
+        offer_type = student_dict.get('Offer_Type', 'FTE') or 'FTE'
 
         row_data = [
             roll_no,

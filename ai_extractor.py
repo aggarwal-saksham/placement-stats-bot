@@ -50,7 +50,7 @@ Convert unstructured placement text into structured JSON.
   "companies": [
     {
       "Company": "Company Name (use standard abbreviations e.g. WWT)",
-      "CGPA_criteria": 7.5 (float or null, 0 is not null, default value 0 if unstated),
+      "CGPA_criteria": 7.5 (float or null),
       "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO",
       "Role": "Job Title",
       "Count": null (float or null),
@@ -58,7 +58,7 @@ Convert unstructured placement text into structured JSON.
       "Base_in_LPA": 17.0 (float or null),
       "Stipend_in_K": 110.0 (float in thousands or null e.g. 110.0 for Rs 1,10,000),
       "Category": "TECH" | "NON TECH" | "CORE",
-      "Comments": "Location if given or ctc breakdown or both/ leave null if unstated"
+      "Comments": "Location / Breakdown notes or null"
     }
   ],
   "students": [
@@ -94,12 +94,12 @@ class AIExtractor:
             "gemini-2.5-flash",
             "gemini-flash-latest",
             "gemini-3.6-flash",
-            "gemini-2.5-pro",
-            "gemini-2.0-flash"
+            "gemini-2.0-flash",
+            "gemini-2.5-pro"
         ]
         last_error = None
 
-        # 1. Try google.genai SDK (New Google GenAI SDK)
+        # Primary: google.genai SDK
         try:
             from google import genai
             from google.genai import types
@@ -123,12 +123,12 @@ class AIExtractor:
         except Exception as e1:
             last_error = e1
 
-        # 2. Try google.generativeai SDK (Legacy SDK fallback)
+        # Fallback: google.generativeai SDK if installed
         if not raw_json_str:
             try:
                 import google.generativeai as genai_old
                 genai_old.configure(api_key=self.api_key)
-                for m_name in ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash", "models/gemini-2.5-flash"]:
+                for m_name in ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]:
                     try:
                         model = genai_old.GenerativeModel(m_name)
                         response = model.generate_content(
@@ -141,6 +141,8 @@ class AIExtractor:
                     except Exception as ex:
                         last_error = ex
                         continue
+            except ImportError:
+                pass
             except Exception as e2:
                 last_error = e2
 

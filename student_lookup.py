@@ -9,13 +9,16 @@ except ImportError:
     HAS_RAPIDFUZZ = False
 
 class StudentLookup:
-    def __init__(self, excel_path=None):
+    def __init__(self, excel_path=None, gspread_worksheet=None):
         self.students = []  # List of dicts: {'Roll No': ..., 'Name': ..., 'CGPA': ..., 'Branch': ...}
-        if excel_path and os.path.exists(excel_path):
+        if gspread_worksheet:
+            self.load_from_gspread(gspread_worksheet)
+        elif excel_path and os.path.exists(excel_path):
             self.load_from_excel(excel_path)
 
     def load_from_excel(self, excel_path):
         """Load CGPA_Master sheet into memory for fast lookup."""
+        self.students = []
         try:
             wb = openpyxl.load_workbook(excel_path, data_only=True)
             if 'CGPA_Master' in wb.sheetnames:
@@ -34,7 +37,28 @@ class StudentLookup:
                         })
             wb.close()
         except Exception as e:
-            print("Error loading CGPA_Master:", e)
+            print("Error loading CGPA_Master from Excel:", e)
+
+    def load_from_gspread(self, gspread_worksheet):
+        """Load CGPA_Master sheet directly from Google Sheets."""
+        self.students = []
+        try:
+            records = gspread_worksheet.get_all_values()
+            if len(records) > 1:
+                # row 0 is header: Roll No, Name, CGPA, Branch
+                for row in records[1:]:
+                    if row and len(row) > 0 and row[0].strip():
+                        roll = str(row[0]).strip().upper()
+                        name = str(row[1]).strip().upper() if len(row) > 1 and row[1] else ""
+                        branch = str(row[3]).strip().upper() if len(row) > 3 and row[3] else ""
+                        self.students.append({
+                            'Roll No': roll,
+                            'Name': name,
+                            'CGPA': None,
+                            'Branch': branch
+                        })
+        except Exception as e:
+            print("Error loading CGPA_Master from Google Sheets:", e)
 
     def find_by_roll(self, roll_no):
         """Find student by Roll No (exact or normalized)."""

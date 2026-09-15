@@ -72,6 +72,9 @@ class PlacementBot:
         status_msg = await update.message.reply_text("⚡ Processing announcement with Gemini AI...")
 
         try:
+            # Refresh live company/student matchers from Google Sheets
+            self.sheet_manager.refresh_matchers()
+
             parsed_result = self.ai_extractor.parse_message(text)
             
             user_id = update.effective_user.id
@@ -79,18 +82,25 @@ class PlacementBot:
 
             preview_text = f"📋 PLACEMENT DATA PARSED\nType: {parsed_result.message_type}\n\n"
 
-            if parsed_result.companies:
+            if parsed_result.message_type in ['COMPANY_ANNOUNCEMENT', 'BOTH'] and parsed_result.companies:
                 preview_text += "🏢 Company Records to Add:\n"
                 for c in parsed_result.companies:
                     exact_name = self.sheet_manager.company_matcher.get_exact_company_name(c.Company)
                     preview_text += f"• Company: {exact_name}\n  Role: {c.Role}\n  Offer Type: {c.Offer_Type}\n  CTC: {c.CTC_in_LPA or 'N/A'} LPA | Base: {c.Base_in_LPA or 'N/A'} LPA | Stipend: {c.Stipend_in_K or 'N/A'}K\n  CGPA Cutoff: {c.CGPA_criteria or 'None'} | Category: {c.Category}\n\n"
 
-            if parsed_result.students:
+            if parsed_result.message_type in ['STUDENT_PLACEMENT', 'BOTH'] and parsed_result.students:
                 preview_text += "🎓 Student Records to Add:\n"
                 for s in parsed_result.students:
                     exact_co = self.sheet_manager.company_matcher.get_exact_company_name(s.Company)
+                    
+                    # Role Fallback preview
+                    role_preview = s.Role
+                    if not role_preview or str(role_preview).lower() in ['none', 'null', 'nan', 'auto-fetch', '']:
+                        roles = self.sheet_manager.company_matcher.find_roles_for_company(exact_co)
+                        role_preview = roles[0] if roles else "Software Engineer"
+
                     enriched = self.sheet_manager.student_lookup.enrich_student_data(s.Roll_No or '', s.Name or '')
-                    preview_text += f"• Roll: {enriched['Roll No']} | Name: {enriched['Name']}\n  Company: {exact_co} | Role: {s.Role or 'Auto-fetch'} | Offer: {s.Offer_Type}\n\n"
+                    preview_text += f"• Roll: {enriched['Roll No']} | Name: {enriched['Name']}\n  Company: {exact_co} | Role: {role_preview} | Offer: {s.Offer_Type}\n\n"
 
             sync_target = "Live Google Sheet" if self.sheet_manager.use_google_sheets else "Local Excel"
             preview_text += f"Confirm to append rows to your {sync_target}:"
@@ -126,22 +136,26 @@ class PlacementBot:
             added_companies = []
             added_students = []
 
-            for c in parsed_result.companies:
-                res = self.sheet_manager.append_company_record(c.model_dump())
-                added_companies.append(res)
+            # Only append to Companies sheet if message_type is COMPANY_ANNOUNCEMENT or BOTH
+            if parsed_result.message_type in ['COMPANY_ANNOUNCEMENT', 'BOTH']:
+                for c in parsed_result.companies:
+                    res = self.sheet_manager.append_company_record(c.model_dump())
+                    added_companies.append(res)
 
-            for s in parsed_result.students:
-                res = self.sheet_manager.append_student_record(s.model_dump())
-                added_students.append(res)
+            # Only append to Students sheet if message_type is STUDENT_PLACEMENT or BOTH
+            if parsed_result.message_type in ['STUDENT_PLACEMENT', 'BOTH']:
+                for s in parsed_result.students:
+                    res = self.sheet_manager.append_student_record(s.model_dump())
+                    added_students.append(res)
 
             del PENDING_PARSES[user_id]
 
             target_name = "Live Google Sheet" if self.sheet_manager.use_google_sheets else "Local Excel"
             success_text = f"🎉 SUCCESS! Synced to {target_name}!\n\n"
             if added_companies:
-                success_text += f"• Added {len(added_companies)} Company record(s).\n"
+                success_text += f"• Added {len(added_companies)} Company record(s) to Companies sheet.\n"
             if added_students:
-                success_text += f"• Added {len(added_students)} Student record(s) (ArrayFormulas auto-filled CGPA, CTC, Stipend, Branch!).\n"
+                success_text += f"• Added {len(added_students)} Student record(s) to Students sheet (ArrayFormulas auto-filled CGPA, CTC, Stipend, Branch!).\n"
 
             await query.edit_message_text(success_text)
 
