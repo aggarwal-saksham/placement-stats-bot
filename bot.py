@@ -77,27 +77,46 @@ class PlacementBot:
 
             parsed_result = self.ai_extractor.parse_message(text)
             
+            # Filter out Company Records if company already exists in Companies sheet!
+            filtered_companies = []
+            if parsed_result.companies:
+                for c in parsed_result.companies:
+                    raw_c_name = c.Company.strip()
+                    exact_name = self.sheet_manager.company_matcher.get_exact_company_name(raw_c_name)
+                    # Check if exact company name is already registered in Companies sheet
+                    existing_names = [name.lower() for name in self.sheet_manager.company_matcher.unique_company_names]
+                    if exact_name.lower() not in existing_names and raw_c_name.lower() not in existing_names:
+                        filtered_companies.append(c)
+                    else:
+                        print(f"Company '{exact_name}' already exists in Companies sheet. Skipping company re-addition.")
+
+            parsed_result.companies = filtered_companies
+
+            # If companies filtered out completely and students present, adjust message_type
+            if not parsed_result.companies and parsed_result.students:
+                parsed_result.message_type = "STUDENT_PLACEMENT"
+
             user_id = update.effective_user.id
             PENDING_PARSES[user_id] = parsed_result
 
             preview_text = f"📋 PLACEMENT DATA PARSED\nType: {parsed_result.message_type}\n\n"
 
-            if parsed_result.message_type in ['COMPANY_ANNOUNCEMENT', 'BOTH'] and parsed_result.companies:
-                preview_text += "🏢 Company Records to Add:\n"
+            if parsed_result.companies:
+                preview_text += "🏢 New Company Records to Add:\n"
                 for c in parsed_result.companies:
                     exact_name = self.sheet_manager.company_matcher.get_exact_company_name(c.Company)
-                    preview_text += f"• Company: {exact_name}\n  Role: {c.Role}\n  Offer Type: {c.Offer_Type}\n  CTC: {c.CTC_in_LPA or 'N/A'} LPA | Base: {c.Base_in_LPA or 'N/A'} LPA | Stipend: {c.Stipend_in_K or 'N/A'}K\n  CGPA Cutoff: {c.CGPA_criteria or 'None'} | Category: {c.Category}\n\n"
+                    preview_text += f"• Company: {exact_name}\n  Role: {c.Role or 'N/A'}\n  Offer Type: {c.Offer_Type}\n  CTC: {c.CTC_in_LPA or 'N/A'} LPA | Base: {c.Base_in_LPA or 'N/A'} LPA | Stipend: {c.Stipend_in_K or 'N/A'}K\n  CGPA Cutoff: {c.CGPA_criteria or 'None'} | Category: {c.Category}\n\n"
 
-            if parsed_result.message_type in ['STUDENT_PLACEMENT', 'BOTH'] and parsed_result.students:
+            if parsed_result.students:
                 preview_text += "🎓 Student Records to Add:\n"
                 for s in parsed_result.students:
                     exact_co = self.sheet_manager.company_matcher.get_exact_company_name(s.Company)
                     
-                    # Role Fallback preview
+                    # Role Fallback preview: Auto-fetch from live Companies sheet if omitted
                     role_preview = s.Role
                     if not role_preview or str(role_preview).lower() in ['none', 'null', 'nan', 'auto-fetch', '']:
                         roles = self.sheet_manager.company_matcher.find_roles_for_company(exact_co)
-                        role_preview = roles[0] if roles else "Software Engineer"
+                        role_preview = roles[0] if roles else "Unstated"
 
                     enriched = self.sheet_manager.student_lookup.enrich_student_data(s.Roll_No or '', s.Name or '')
                     preview_text += f"• Roll: {enriched['Roll No']} | Name: {enriched['Name']}\n  Company: {exact_co} | Role: {role_preview} | Offer: {s.Offer_Type}\n\n"
@@ -136,14 +155,14 @@ class PlacementBot:
             added_companies = []
             added_students = []
 
-            # Only append to Companies sheet if message_type is COMPANY_ANNOUNCEMENT or BOTH
-            if parsed_result.message_type in ['COMPANY_ANNOUNCEMENT', 'BOTH']:
+            # Only append to Companies sheet if company is NEW and message_type allows
+            if parsed_result.companies:
                 for c in parsed_result.companies:
                     res = self.sheet_manager.append_company_record(c.model_dump())
                     added_companies.append(res)
 
-            # Only append to Students sheet if message_type is STUDENT_PLACEMENT or BOTH
-            if parsed_result.message_type in ['STUDENT_PLACEMENT', 'BOTH']:
+            # Append to Students sheet if student records exist
+            if parsed_result.students:
                 for s in parsed_result.students:
                     res = self.sheet_manager.append_student_record(s.model_dump())
                     added_students.append(res)

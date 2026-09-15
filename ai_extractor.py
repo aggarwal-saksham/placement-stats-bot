@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 
@@ -74,7 +75,7 @@ Convert unstructured placement text into structured JSON.
       "Roll_No": "23/IT/145" (or null if unstated),
       "Name": "Student Name" (or null if unstated),
       "Company": "Company Name",
-      "Role": "Job Title" (or null if unstated),
+      "Role": "Job Title (or null if unstated)",
       "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO"
     }
   ]
@@ -100,43 +101,49 @@ class AIExtractor:
         raw_json_str = ""
         candidate_models = [
             "gemini-2.5-flash",
-            "gemini-flash-latest",
-            "gemini-3.6-flash",
             "gemini-2.0-flash",
-            "gemini-2.5-pro"
+            "gemini-flash-latest"
         ]
         last_error = None
 
-        # 1. Try google.genai SDK (New Google GenAI SDK)
+        # Try API calls with retry handling for 429 rate limits
         try:
             from google import genai
             from google.genai import types
             client = genai.Client(api_key=self.api_key)
+            
             for m_name in candidate_models:
-                try:
-                    response = client.models.generate_content(
-                        model=m_name,
-                        contents=f"{SYSTEM_PROMPT}\n\nParse the following placement text:\n\n{text}",
-                        config=types.GenerateContentConfig(
-                            response_mime_type='application/json',
-                            temperature=0.1
+                for attempt in range(2):
+                    try:
+                        response = client.models.generate_content(
+                            model=m_name,
+                            contents=f"{SYSTEM_PROMPT}\n\nParse the following placement text:\n\n{text}",
+                            config=types.GenerateContentConfig(
+                                response_mime_type='application/json',
+                                temperature=0.1
+                            )
                         )
-                    )
-                    if response and response.text:
-                        raw_json_str = response.text
+                        if response and response.text:
+                            raw_json_str = response.text
+                            break
+                    except Exception as ex:
+                        last_error = ex
+                        if "429" in str(ex) or "Quota" in str(ex):
+                            time.sleep(2)  # Wait 2 seconds on rate limit before retry
+                            continue
                         break
-                except Exception as ex:
-                    last_error = ex
-                    continue
+                if raw_json_str:
+                    break
+
         except Exception as e1:
             last_error = e1
 
-        # 2. Try google.generativeai SDK (Legacy SDK fallback)
+        # Fallback to legacy SDK if google-genai is not used
         if not raw_json_str:
             try:
                 import google.generativeai as genai_old
                 genai_old.configure(api_key=self.api_key)
-                for m_name in ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]:
+                for m_name in candidate_models:
                     try:
                         model = genai_old.GenerativeModel(m_name)
                         response = model.generate_content(
@@ -155,7 +162,7 @@ class AIExtractor:
                 last_error = e2
 
         if not raw_json_str:
-            raise RuntimeError(f"Failed to call Gemini API across models: {last_error}")
+            raise RuntimeError(f"Gemini API error: {last_error}")
 
         # Clean JSON markdown if any
         clean_str = re.sub(r'^```json\s*', '', raw_json_str.strip())
