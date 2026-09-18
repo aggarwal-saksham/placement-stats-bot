@@ -7,7 +7,7 @@ from typing import List, Optional
 
 class CompanyRecord(BaseModel):
     Company: str
-    CGPA_criteria: Optional[float] = None
+    CGPA_criteria: float = 0.0
     Offer_Type: Optional[str] = "FTE"
     Role: Optional[str] = None
     Count: Optional[float] = None
@@ -16,6 +16,15 @@ class CompanyRecord(BaseModel):
     Stipend_in_K: Optional[float] = None
     Category: Optional[str] = "TECH"
     Comments: Optional[str] = None
+
+    @field_validator("CGPA_criteria", mode="before")
+    def default_cgpa(cls, v):
+        if v is None or str(v).strip().lower() in ['', 'none', 'null', 'nan']:
+            return 0.0
+        try:
+            return float(v)
+        except Exception:
+            return 0.0
 
     @field_validator("Role", mode="before")
     def default_role(cls, v):
@@ -58,14 +67,14 @@ Convert unstructured placement text into structured JSON.
   "message_type": "COMPANY_ANNOUNCEMENT" | "STUDENT_PLACEMENT" | "BOTH",
   "companies": [
     {
-      "Company": "Company Name (use standard abbreviations e.g. WWT)",
-      "CGPA_criteria": 7.5 (float or null),
+      "Company": "Company Name (use standard clean company name e.g. Thorogood Associates, WWT)",
+      "CGPA_criteria": 7.5 (float, default to 0.0 if not specified),
       "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO",
-      "Role": "Job Title (or null if unstated)",
+      "Role": "Job Title (e.g. Data and AI Consultant)",
       "Count": null (float or null),
-      "CTC_in_LPA": 23.0 (float or null, higher if range given),
-      "Base_in_LPA": 17.0 (float or null),
-      "Stipend_in_K": 110.0 (float in thousands or null e.g. 110.0 for Rs 1,10,000),
+      "CTC_in_LPA": 14.8 (float or null, higher if range given),
+      "Base_in_LPA": null (float or null),
+      "Stipend_in_K": 45.0 (float in thousands or null e.g. 45.0 for 45k/month),
       "Category": "TECH" | "NON TECH" | "CORE",
       "Comments": "Location / Breakdown notes or null"
     }
@@ -75,24 +84,25 @@ Convert unstructured placement text into structured JSON.
       "Roll_No": "23/IT/145" (or null if unstated),
       "Name": "Student Name" (or null if unstated),
       "Company": "Company Name",
-      "Role": "Job Title (or null if unstated)",
+      "Role": "Job Title" (or null if unstated),
       "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO"
     }
   ]
 }
 
-### CRITICAL RULES:
-1. **Multi-Role Companies**: If a company announcement lists multiple roles (e.g. Software Engineer AND Data Analyst), CREATE SEPARATE COMPANY OBJECTS IN THE ARRAY FOR EACH ROLE with identical CTC/stipend details.
-2. **Category**:
-   - `NON TECH`: Data Analyst, DA, Business Analyst, Analyst, Consultant, Product Analyst, Operations, Finance, etc.
-   - `TECH`: SDE, SWE, Software Engineer, MLE, Data Science, Frontend, Backend, Full Stack, DevOps, Product Engineer, etc.
+### CRITICAL PARSING RULES:
+1. **BTECH ONLY**: Always extract the **BTech** CGPA Cutoff if separate BTech and MTech cutoffs are given (e.g. "CGPA CUTOFF : 7.5 (BTech) / 7 (MTech)" -> 7.5). Ignore MTech criteria completely.
+2. **DEFAULT CGPA CUTOFF**: If CGPA cutoff is not stated in the message, set `"CGPA_criteria": 0.0`.
+3. **Multi-Role Companies**: If a company announcement lists multiple roles (e.g. Software Engineer AND Data Analyst), CREATE SEPARATE COMPANY OBJECTS IN THE ARRAY FOR EACH ROLE with identical CTC/stipend details.
+4. **Category**:
+   - `NON TECH`: Data Analyst, DA, Business Analyst, Analyst, Consultant, Product Analyst, Operations, Finance, Data and AI Consultant, etc.
+   - `TECH`: SDE, SWE, Software Engineer, MLE, Data Science Engineer, Data Scientist, Frontend, Backend, Full Stack, DevOps, Product Engineer, etc.
    - `CORE`: Mechanical, Civil, Electrical, Electronics, VLSI, Embedded, GET, Chemical, etc.
-3. Return ONLY valid JSON adhering strictly to the above format.
+5. Return ONLY valid JSON adhering strictly to the above format.
 """
 
 class AIExtractor:
     def __init__(self, api_key: str = None):
-        # Support multiple API keys separated by commas in GEMINI_API_KEYS
         env_keys = os.getenv("GEMINI_API_KEYS", "") or os.getenv("GEMINI_API_KEY", "")
         if api_key:
             self.api_keys = [api_key]
@@ -115,7 +125,7 @@ class AIExtractor:
         ]
         last_error = None
 
-        # Try across all available API keys and model pools
+        # Try API calls with retry handling for rate limits
         for current_key in self.api_keys:
             try:
                 from google import genai
@@ -123,24 +133,27 @@ class AIExtractor:
                 client = genai.Client(api_key=current_key)
                 
                 for m_name in candidate_models:
-                    try:
-                        response = client.models.generate_content(
-                            model=m_name,
-                            contents=f"{SYSTEM_PROMPT}\n\nParse the following placement text:\n\n{text}",
-                            config=types.GenerateContentConfig(
-                                response_mime_type='application/json',
-                                temperature=0.1
+                    for attempt in range(2):
+                        try:
+                            response = client.models.generate_content(
+                                model=m_name,
+                                contents=f"{SYSTEM_PROMPT}\n\nParse the following placement text:\n\n{text}",
+                                config=types.GenerateContentConfig(
+                                    response_mime_type='application/json',
+                                    temperature=0.1
+                                )
                             )
-                        )
-                        if response and response.text:
-                            raw_json_str = response.text
+                            if response and response.text:
+                                raw_json_str = response.text
+                                break
+                        except Exception as ex:
+                            last_error = ex
+                            if "429" in str(ex) or "Quota" in str(ex):
+                                time.sleep(1)
+                                continue
                             break
-                    except Exception as ex:
-                        last_error = ex
-                        # If quota/rate limit error, try next model or next API key
-                        if "429" in str(ex) or "Quota" in str(ex) or "RPD" in str(ex):
-                            continue
-                        continue
+                    if raw_json_str:
+                        break
                 if raw_json_str:
                     break
             except Exception as e1:
@@ -171,7 +184,7 @@ class AIExtractor:
                     pass
 
         if not raw_json_str:
-            raise RuntimeError(f"Gemini API Error (Quota/Rate Limit): {last_error}")
+            raise RuntimeError(f"Gemini API Error: {last_error}")
 
         # Clean JSON markdown if any
         clean_str = re.sub(r'^```json\s*', '', raw_json_str.strip())

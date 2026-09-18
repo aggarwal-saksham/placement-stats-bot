@@ -77,24 +77,38 @@ class PlacementBot:
 
             parsed_result = self.ai_extractor.parse_message(text)
             
-            # Filter out Company Records if company already exists in Companies sheet!
+            # 1. Filter Companies: Only keep if company name is NOT already in Companies sheet
             filtered_companies = []
             if parsed_result.companies:
+                existing_names = [name.strip().lower() for name in self.sheet_manager.company_matcher.unique_company_names]
                 for c in parsed_result.companies:
-                    raw_c_name = c.Company.strip()
-                    exact_name = self.sheet_manager.company_matcher.get_exact_company_name(raw_c_name)
-                    # Check if exact company name is already registered in Companies sheet
-                    existing_names = [name.lower() for name in self.sheet_manager.company_matcher.unique_company_names]
-                    if exact_name.lower() not in existing_names and raw_c_name.lower() not in existing_names:
+                    raw_c_name = c.Company.strip().lower()
+                    # Check exact match against existing registered sheet names
+                    if raw_c_name not in existing_names:
                         filtered_companies.append(c)
                     else:
-                        print(f"Company '{exact_name}' already exists in Companies sheet. Skipping company re-addition.")
+                        print(f"Company '{c.Company}' already exists in Companies sheet. Skipping re-addition.")
 
             parsed_result.companies = filtered_companies
 
-            # If companies filtered out completely and students present, adjust message_type
+            # 2. Filter Students: Ignore student roll numbers starting with 25/
+            filtered_students = []
+            if parsed_result.students:
+                for s in parsed_result.students:
+                    enriched = self.sheet_manager.student_lookup.enrich_student_data(s.Roll_No or '', s.Name or '')
+                    roll = enriched.get('Roll No', '').strip().upper()
+                    if roll.startswith("25/"):
+                        print(f"Filtering out student {enriched.get('Name')} because roll starts with 25/")
+                        continue
+                    filtered_students.append(s)
+
+            parsed_result.students = filtered_students
+
+            # Adjust message type if companies filtered out
             if not parsed_result.companies and parsed_result.students:
                 parsed_result.message_type = "STUDENT_PLACEMENT"
+            elif parsed_result.companies and not parsed_result.students:
+                parsed_result.message_type = "COMPANY_ANNOUNCEMENT"
 
             user_id = update.effective_user.id
             PENDING_PARSES[user_id] = parsed_result
@@ -104,8 +118,7 @@ class PlacementBot:
             if parsed_result.companies:
                 preview_text += "🏢 New Company Records to Add:\n"
                 for c in parsed_result.companies:
-                    exact_name = self.sheet_manager.company_matcher.get_exact_company_name(c.Company)
-                    preview_text += f"• Company: {exact_name}\n  Role: {c.Role or 'N/A'}\n  Offer Type: {c.Offer_Type}\n  CTC: {c.CTC_in_LPA or 'N/A'} LPA | Base: {c.Base_in_LPA or 'N/A'} LPA | Stipend: {c.Stipend_in_K or 'N/A'}K\n  CGPA Cutoff: {c.CGPA_criteria or 'None'} | Category: {c.Category}\n\n"
+                    preview_text += f"• Company: {c.Company}\n  Role: {c.Role or 'N/A'}\n  Offer Type: {c.Offer_Type}\n  CTC: {c.CTC_in_LPA or 'N/A'} LPA | Base: {c.Base_in_LPA or 'N/A'} LPA | Stipend: {c.Stipend_in_K or 'N/A'}K\n  CGPA Cutoff: {c.CGPA_criteria}\n  Category: {c.Category}\n\n"
 
             if parsed_result.students:
                 preview_text += "🎓 Student Records to Add:\n"
@@ -120,6 +133,10 @@ class PlacementBot:
 
                     enriched = self.sheet_manager.student_lookup.enrich_student_data(s.Roll_No or '', s.Name or '')
                     preview_text += f"• Roll: {enriched['Roll No']} | Name: {enriched['Name']}\n  Company: {exact_co} | Role: {role_preview} | Offer: {s.Offer_Type}\n\n"
+
+            if not parsed_result.companies and not parsed_result.students:
+                await status_msg.edit_text("ℹ️ No new records found or all records were already present / filtered out.")
+                return
 
             sync_target = "Live Google Sheet" if self.sheet_manager.use_google_sheets else "Local Excel"
             preview_text += f"Confirm to append rows to your {sync_target}:"
@@ -155,7 +172,7 @@ class PlacementBot:
             added_companies = []
             added_students = []
 
-            # Only append to Companies sheet if company is NEW and message_type allows
+            # Only append to Companies sheet if company is NEW
             if parsed_result.companies:
                 for c in parsed_result.companies:
                     res = self.sheet_manager.append_company_record(c.model_dump())
@@ -165,7 +182,8 @@ class PlacementBot:
             if parsed_result.students:
                 for s in parsed_result.students:
                     res = self.sheet_manager.append_student_record(s.model_dump())
-                    added_students.append(res)
+                    if res:
+                        added_students.append(res)
 
             del PENDING_PARSES[user_id]
 
