@@ -6,43 +6,70 @@ from student_lookup import StudentLookup
 class SheetManager:
     def __init__(self, excel_path=None, google_sheet_credentials=None, google_sheet_url=None):
         self.excel_path = excel_path or r"C:\Users\DELL\Downloads\2027 unoff stats (1).xlsx"
+        self.google_sheet_credentials = google_sheet_credentials
+        self.google_sheet_url = google_sheet_url
         self.use_google_sheets = False
         self.gspread_client = None
         self.spreadsheet = None
+        self._company_matcher = None
+        self._student_lookup = None
 
-        if google_sheet_credentials:
+    def _connect(self):
+        if self.spreadsheet:
+            return
+        if self.google_sheet_credentials:
             try:
                 import gspread
                 import json
-                if os.path.exists(google_sheet_credentials):
-                    self.gspread_client = gspread.service_account(filename=google_sheet_credentials)
-                elif google_sheet_credentials.strip().startswith("{"):
-                    creds_dict = json.loads(google_sheet_credentials)
+                if os.path.exists(self.google_sheet_credentials):
+                    self.gspread_client = gspread.service_account(filename=self.google_sheet_credentials)
+                elif self.google_sheet_credentials.strip().startswith("{"):
+                    creds_dict = json.loads(self.google_sheet_credentials)
                     self.gspread_client = gspread.service_account_from_dict(creds_dict)
-                if self.gspread_client and google_sheet_url:
-                    self.spreadsheet = self.gspread_client.open_by_key(google_sheet_url) if "/" not in google_sheet_url else self.gspread_client.open_by_url(google_sheet_url)
+                if self.gspread_client and self.google_sheet_url:
+                    self.spreadsheet = self.gspread_client.open_by_key(self.google_sheet_url) if "/" not in self.google_sheet_url else self.gspread_client.open_by_url(self.google_sheet_url)
                     self.use_google_sheets = True
                     print("Connected to Google Sheets successfully!")
             except Exception as e:
                 print("Failed to initialize Google Sheets, falling back to local Excel mode:", e)
 
-        self.refresh_matchers()
+    @property
+    def company_matcher(self):
+        if self._company_matcher is None:
+            self.refresh_company_matcher()
+        return self._company_matcher
 
-    def refresh_matchers(self):
-        """Reload matchers from current Google Sheets or Excel data."""
+    @property
+    def student_lookup(self):
+        if self._student_lookup is None:
+            self.refresh_student_lookup()
+        return self._student_lookup
+
+    def refresh_company_matcher(self):
+        self._connect()
         if self.use_google_sheets and self.spreadsheet:
             try:
                 comp_ws = self.spreadsheet.worksheet("Companies")
-                master_ws = self.spreadsheet.worksheet("CGPA_Master")
-                self.company_matcher = CompanyMatcher(gspread_worksheet=comp_ws)
-                self.student_lookup = StudentLookup(gspread_worksheet=master_ws)
+                self._company_matcher = CompanyMatcher(gspread_worksheet=comp_ws)
                 return
             except Exception as e:
-                print("Error refreshing matchers from Google Sheets:", e)
-        
-        # Fallback to local Excel
-        self.company_matcher = CompanyMatcher(excel_path=self.excel_path)
-        self.student_lookup = StudentLookup(excel_path=self.excel_path)
+                print("Error loading company matcher from Google Sheets:", e)
+        self._company_matcher = CompanyMatcher(excel_path=self.excel_path)
+
+    def refresh_student_lookup(self):
+        self._connect()
+        if self.use_google_sheets and self.spreadsheet:
+            try:
+                master_ws = self.spreadsheet.worksheet("CGPA_Master")
+                self._student_lookup = StudentLookup(gspread_worksheet=master_ws)
+                return
+            except Exception as e:
+                print("Error loading student lookup from Google Sheets:", e)
+        self._student_lookup = StudentLookup(excel_path=self.excel_path)
+
+    def refresh_matchers(self):
+        self.refresh_company_matcher()
+        self.refresh_student_lookup()
 
     def append_company_record(self, company_dict: dict) -> dict:
         """

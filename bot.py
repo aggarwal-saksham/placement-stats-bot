@@ -73,9 +73,6 @@ class PlacementBot:
         status_msg = await update.message.reply_text("⚡ Processing announcement with Gemini AI...")
 
         try:
-            # Refresh live company/student matchers from Google Sheets
-            self.sheet_manager.refresh_matchers()
-
             parsed_result = self.ai_extractor.parse_message(text)
             
             # 1. Filter Companies: Only keep if (Company + Role) is NOT already present in Companies sheet
