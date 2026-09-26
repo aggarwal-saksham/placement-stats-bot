@@ -72,11 +72,11 @@ Convert unstructured placement text into structured JSON.
       "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO",
       "Role": "Job Title (e.g. Data and AI Consultant)",
       "Count": null (float or null),
-      "CTC_in_LPA": 14.8 (float or null, higher if range given),
-      "Base_in_LPA": null (float or null),
-      "Stipend_in_K": 45.0 (float in thousands or null e.g. 45.0 for 45k/month),
+      "CTC_in_LPA": 14.8 (float, upper limit if range given, e.g. 10.0 for 8-10 LPA),
+      "Base_in_LPA": null (float, upper limit if range given),
+      "Stipend_in_K": 45.0 (float in thousands, upper limit if range given, e.g. 20.0 for 15,000-20,000/M or 45.0 for 45k/month),
       "Category": "TECH" | "NON TECH" | "CORE",
-      "Comments": "Location / Breakdown notes or null"
+      "Comments": "Location / original salary ranges if given e.g. 'Location: Bengaluru | Stipend: 15k-20k/M | CTC: 8-10 LPA'"
     }
   ],
   "students": [
@@ -84,21 +84,34 @@ Convert unstructured placement text into structured JSON.
       "Roll_No": "23/IT/145" (or null if unstated),
       "Name": "Student Name" (or null if unstated),
       "Company": "Company Name",
-      "Role": "Job Title" (or null if unstated),
-      "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO"
+      "Role": "Job Title" (or null if unstated)
     }
   ]
 }
 
 ### CRITICAL PARSING RULES:
-1. **BTECH ONLY**: Always extract the **BTech** CGPA Cutoff if separate BTech and MTech cutoffs are given (e.g. "CGPA CUTOFF : 7.5 (BTech) / 7 (MTech)" -> 7.5). Ignore MTech criteria completely.
-2. **DEFAULT CGPA CUTOFF**: If CGPA cutoff is not stated in the message, set `"CGPA_criteria": 0.0`.
-3. **Multi-Role Companies**: If a company announcement lists multiple roles (e.g. Software Engineer AND Data Analyst), CREATE SEPARATE COMPANY OBJECTS IN THE ARRAY FOR EACH ROLE with identical CTC/stipend details.
-4. **Category**:
+1. **STRICTLY BTECH ONLY (IGNORE MTECH COMPLETELY)**:
+   - This portal is strictly for BTech placements.
+   - Ignore ALL MTech, Dual Degree, PhD, or postgraduate branches, roles, cutoffs, and criteria.
+   - If separate cutoffs are given (e.g. "CGPA CUTOFF: 7.5 (BTech) / 7 (MTech)"), extract ONLY the BTech cutoff (7.5).
+   - If eligibility lists BTech and MTech separately, only extract/consider BTech criteria.
+   - NEVER include MTech notes or MTech criteria in the "Comments" field.
+2. **CTC & STIPEND RANGE RULE (UPPER LIMIT + RECORD IN COMMENTS)**:
+   - If a range is given for CTC (e.g. "8-10 LPA", "15 - 18 LPA", "12 to 14 LPA"):
+     - Set `CTC_in_LPA` to the **UPPER LIMIT** (e.g. 10.0, 18.0, 14.0).
+     - You MUST record the original range in `Comments` (e.g. "CTC: 8-10 LPA").
+   - If a range is given for Stipend (e.g. "INR 15,000-20,000 /M", "15k-20k/month", "30-40k"):
+     - Set `Stipend_in_K` to the **UPPER LIMIT** in thousands (e.g. 20.0 for 15,000-20,000/M, 40.0 for 30-40k).
+     - You MUST record the original range in `Comments` (e.g. "Stipend: 15,000-20,000 /M").
+   - If a range is given for Base, set `Base_in_LPA` to the upper limit and record in `Comments`.
+   - Preserve existing location or other notes in `Comments` alongside the range (e.g. "Location: Noida | CTC: 8-10 LPA | Stipend: 15k-20k/M").
+3. **DEFAULT CGPA CUTOFF**: If CGPA cutoff is not stated in the message, set `"CGPA_criteria": 0.0`.
+4. **Multi-Role Companies**: If a company announcement lists multiple roles (e.g. Software Engineer AND Data Analyst), CREATE SEPARATE COMPANY OBJECTS IN THE ARRAY FOR EACH ROLE with identical CTC/stipend details.
+5. **Category**:
    - `NON TECH`: Data Analyst, DA, Business Analyst, Analyst, Consultant, Product Analyst, Operations, Finance, Data and AI Consultant, etc.
    - `TECH`: SDE, SWE, Software Engineer, MLE, Data Science Engineer, Data Scientist, Frontend, Backend, Full Stack, DevOps, Product Engineer, etc.
    - `CORE`: Mechanical, Civil, Electrical, Electronics, VLSI, Embedded, GET, Chemical, etc.
-5. Return ONLY valid JSON adhering strictly to the above format.
+6. Return ONLY valid JSON adhering strictly to the above format.
 """
 
 class AIExtractor:
@@ -117,11 +130,11 @@ class AIExtractor:
 
         raw_json_str = ""
         candidate_models = [
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
             "gemini-2.5-flash",
             "gemini-2.0-flash",
-            "gemini-flash-lite-latest",
-            "gemini-flash-latest",
-            "gemini-3.6-flash"
         ]
         last_error = None
 
@@ -191,4 +204,54 @@ class AIExtractor:
         clean_str = re.sub(r'\s*```$', '', clean_str)
 
         data = json.loads(clean_str)
-        return PlacementParseResult.model_validate(data)
+        result = PlacementParseResult.model_validate(data)
+
+        # Post-process parsed companies for range safety and BTech enforcement
+        ctc_range_match = re.search(r'(?:CTC|Package)[^\n:]*:\s*([^\n]+)', text, re.IGNORECASE)
+        ctc_range_str = None
+        ctc_upper = None
+        if ctc_range_match:
+            raw_val = ctc_range_match.group(1).replace('*', '').strip()
+            m = re.search(r'(\d+(?:\.\d+)?)\s*[-–to]+\s*(\d+(?:\.\d+)?)\s*(?:LPA|L)?', raw_val, re.IGNORECASE)
+            if m:
+                ctc_range_str = f"CTC: {raw_val}"
+                ctc_upper = float(m.group(2))
+
+        stipend_range_match = re.search(r'(?:Stipend)[^\n:]*:\s*([^\n]+)', text, re.IGNORECASE)
+        stipend_range_str = None
+        stipend_upper = None
+        if stipend_range_match:
+            raw_val = stipend_range_match.group(1).replace('*', '').strip()
+            m1 = re.search(r'(\d{1,3}(?:,\d{3})+|\d+)\s*[-–to]+\s*(\d{1,3}(?:,\d{3})+|\d+)', raw_val, re.IGNORECASE)
+            m2 = re.search(r'(\d+(?:\.\d+)?)\s*k?\s*[-–to]+\s*(\d+(?:\.\d+)?)\s*k', raw_val, re.IGNORECASE)
+            if m1 and not m2:
+                stipend_range_str = f"Stipend: {raw_val}"
+                u_val = float(m1.group(2).replace(',', ''))
+                stipend_upper = u_val / 1000.0 if u_val >= 1000 else u_val
+            elif m2:
+                stipend_range_str = f"Stipend: {raw_val}"
+                stipend_upper = float(m2.group(2))
+
+        for c in result.companies:
+            if ctc_upper and (c.CTC_in_LPA is None or c.CTC_in_LPA < ctc_upper):
+                c.CTC_in_LPA = ctc_upper
+            if stipend_upper and (c.Stipend_in_K is None or c.Stipend_in_K < stipend_upper):
+                c.Stipend_in_K = stipend_upper
+
+            comments = c.Comments or ""
+            # Strip any accidental MTech mentions from comments
+            comments = re.sub(r'(?:m\.?tech|postgraduate)[^|;\n]*', '', comments, flags=re.IGNORECASE).strip(" |;,")
+
+            range_notes = []
+            if ctc_range_str and ctc_range_str.lower() not in comments.lower():
+                range_notes.append(ctc_range_str)
+            if stipend_range_str and stipend_range_str.lower() not in comments.lower():
+                range_notes.append(stipend_range_str)
+
+            if range_notes:
+                note_str = " | ".join(range_notes)
+                c.Comments = f"{comments} | {note_str}".strip(" |") if comments else note_str
+            else:
+                c.Comments = comments if comments else None
+
+        return result

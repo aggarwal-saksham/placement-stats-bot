@@ -77,17 +77,17 @@ class PlacementBot:
 
             parsed_result = self.ai_extractor.parse_message(text)
             
-            # 1. Filter Companies: Only keep if company name is NOT already in Companies sheet
+            # 1. Filter Companies: Only keep if (Company + Role) is NOT already present in Companies sheet
             filtered_companies = []
             if parsed_result.companies:
-                existing_names = [name.strip().lower() for name in self.sheet_manager.company_matcher.unique_company_names]
                 for c in parsed_result.companies:
-                    raw_c_name = c.Company.strip().lower()
-                    # Check exact match against existing registered sheet names
-                    if raw_c_name not in existing_names:
+                    is_present = self.sheet_manager.company_matcher.is_company_role_present(c.Company, c.Role)
+                    if not is_present:
+                        # Normalize company name to exact sheet string if already known under another role
+                        c.Company = self.sheet_manager.company_matcher.get_exact_company_name(c.Company)
                         filtered_companies.append(c)
                     else:
-                        print(f"Company '{c.Company}' already exists in Companies sheet. Skipping re-addition.")
+                        print(f"Company '{c.Company}' with role '{c.Role}' already exists in Companies sheet. Skipping re-addition.")
 
             parsed_result.companies = filtered_companies
 
@@ -118,7 +118,17 @@ class PlacementBot:
             if parsed_result.companies:
                 preview_text += "🏢 New Company Records to Add:\n"
                 for c in parsed_result.companies:
-                    preview_text += f"• Company: {c.Company}\n  Role: {c.Role or 'N/A'}\n  Offer Type: {c.Offer_Type}\n  CTC: {c.CTC_in_LPA or 'N/A'} LPA | Base: {c.Base_in_LPA or 'N/A'} LPA | Stipend: {c.Stipend_in_K or 'N/A'}K\n  CGPA Cutoff: {c.CGPA_criteria}\n  Category: {c.Category}\n\n"
+                    preview_text += (
+                        f"• Company: {c.Company}\n"
+                        f"  Role: {c.Role or 'N/A'}\n"
+                        f"  Offer Type: {c.Offer_Type}\n"
+                        f"  CTC: {c.CTC_in_LPA or 'N/A'} LPA | Base: {c.Base_in_LPA or 'N/A'} LPA | Stipend: {c.Stipend_in_K or 'N/A'}K\n"
+                        f"  CGPA Cutoff: {c.CGPA_criteria}\n"
+                        f"  Category: {c.Category}\n"
+                    )
+                    if c.Comments:
+                        preview_text += f"  Comments: {c.Comments}\n"
+                    preview_text += "\n"
 
             if parsed_result.students:
                 preview_text += "🎓 Student Records to Add:\n"

@@ -99,3 +99,46 @@ class CompanyMatcher:
                 if item['Role'] not in roles:
                     roles.append(item['Role'])
         return roles
+
+    def is_company_role_present(self, input_company: str, input_role: str = None) -> bool:
+        """
+        Checks if a company with this specific role already exists in the Companies sheet.
+        Returns True if already present (should be skipped).
+        Returns False if new (should be added).
+        
+        Rules:
+        - If company is not registered at all -> False (Add new company).
+        - If company exists, but has NO entries with this role -> False (Add new role for company).
+        - If company exists AND has an entry with matching role -> True (Duplicate, skip).
+        - If company exists but input_role is unstated/empty -> True (Duplicate, skip).
+        """
+        if not input_company:
+            return True
+            
+        exact_co = self.get_exact_company_name(input_company)
+        
+        matching = [
+            item for item in self.companies_data
+            if item['Company'].strip().lower() == exact_co.strip().lower()
+        ]
+        
+        if not matching:
+            return False
+            
+        clean_new_role = (input_role or '').strip().lower()
+        if not clean_new_role or clean_new_role in ['none', 'null', 'nan']:
+            return True
+            
+        for item in matching:
+            ex_role = item.get('Role', '').strip().lower()
+            if not ex_role:
+                continue
+            if ex_role == clean_new_role:
+                return True
+            if len(clean_new_role) >= 4 and clean_new_role in ex_role:
+                return True
+            if len(ex_role) >= 4 and ex_role in clean_new_role:
+                return True
+                
+        return False
+
