@@ -132,13 +132,17 @@ class AIExtractor:
         candidate_models = [
             "gemini-3.8-flash",
             "gemini-flash-latest",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
             "gemini-flash-lite-latest",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
+            "gemini-pro-latest",
+            "gemini-2.5-pro",
         ]
         last_error = None
 
-        # Try API calls with retry handling for rate limits
+        # Try API calls across API keys and auto-fallback models
         for current_key in self.api_keys:
             try:
                 from google import genai
@@ -146,27 +150,28 @@ class AIExtractor:
                 client = genai.Client(api_key=current_key)
                 
                 for m_name in candidate_models:
-                    for attempt in range(2):
-                        try:
-                            response = client.models.generate_content(
-                                model=m_name,
-                                contents=f"{SYSTEM_PROMPT}\n\nParse the following placement text:\n\n{text}",
-                                config=types.GenerateContentConfig(
-                                    response_mime_type='application/json',
-                                    temperature=0.1
-                                )
+                    try:
+                        response = client.models.generate_content(
+                            model=m_name,
+                            contents=f"{SYSTEM_PROMPT}\n\nParse the following placement text:\n\n{text}",
+                            config=types.GenerateContentConfig(
+                                response_mime_type='application/json',
+                                temperature=0.1
                             )
-                            if response and response.text:
-                                raw_json_str = response.text
-                                break
-                        except Exception as ex:
-                            last_error = ex
-                            if "429" in str(ex) or "Quota" in str(ex):
-                                time.sleep(1)
-                                continue
+                        )
+                        if response and response.text:
+                            raw_json_str = response.text
+                            print(f"✅ Successfully parsed using Gemini model: {m_name}")
                             break
-                    if raw_json_str:
-                        break
+                    except Exception as ex:
+                        last_error = ex
+                        err_msg = str(ex).lower()
+                        if any(kw in err_msg for kw in ["429", "quota", "resource_exhausted", "limit", "rate"]):
+                            print(f"⚠️ Model '{m_name}' hit rate/quota limit. Auto-spinning down to next LLM...")
+                        else:
+                            print(f"⚠️ Model '{m_name}' failed ({ex}). Spinning down to next LLM...")
+                        continue
+
                 if raw_json_str:
                     break
             except Exception as e1:
@@ -187,9 +192,11 @@ class AIExtractor:
                             )
                             if response and response.text:
                                 raw_json_str = response.text
+                                print(f"✅ Successfully parsed using legacy SDK model: {m_name}")
                                 break
                         except Exception as ex:
                             last_error = ex
+                            print(f"⚠️ Legacy model '{m_name}' failed/quota exceeded. Spinning down to next...")
                             continue
                     if raw_json_str:
                         break
@@ -197,7 +204,7 @@ class AIExtractor:
                     pass
 
         if not raw_json_str:
-            raise RuntimeError(f"Gemini API Error: {last_error}")
+            raise RuntimeError(f"Gemini API Error (all fallback models exhausted): {last_error}")
 
         # Clean JSON markdown if any
         clean_str = re.sub(r'^```json\s*', '', raw_json_str.strip())
