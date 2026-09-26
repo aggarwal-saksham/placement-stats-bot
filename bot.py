@@ -39,8 +39,9 @@ def start_health_check_server():
     print(f"🌐 Health check HTTP server listening on port {port} for Render...")
     httpd.serve_forever()
 
-# Start HTTP server in background thread for Render health checks
-threading.Thread(target=start_health_check_server, daemon=True).start()
+# Start HTTP server in background thread only if deployed on Render
+if os.getenv("RENDER"):
+    threading.Thread(target=start_health_check_server, daemon=True).start()
 
 
 # ----------------------------------------------------
@@ -169,11 +170,52 @@ class PlacementBot:
 
         user_id = query.from_user.id
         if user_id not in PENDING_PARSES:
-            await query.edit_message_text("⚠️ No pending parse session found or session expired.")
+            # 1. Check /tmp persistence
+            tmp_path = f"/tmp/pending_{user_id}.json"
+            if os.path.exists(tmp_path):
+                try:
+                    with open(tmp_path, "r", encoding="utf-8") as f:
+                        from ai_extractor import PlacementParseResult
+                        PENDING_PARSES[user_id] = PlacementParseResult.model_validate_json(f.read())
+                except Exception:
+                    pass
+
+        if user_id not in PENDING_PARSES:
+            # 2. Re-parse from reply_to_message text if container restarted
+            if query.message and query.message.reply_to_message and query.message.reply_to_message.text:
+                orig_text = query.message.reply_to_message.text
+                try:
+                    self.sheet_manager.refresh_matchers()
+                    reparsed = self.ai_extractor.parse_message(orig_text)
+                    filtered_companies = []
+                    if reparsed.companies:
+                        for c in reparsed.companies:
+                            if not self.sheet_manager.company_matcher.is_company_role_present(c.Company, c.Role):
+                                c.Company = self.sheet_manager.company_matcher.get_exact_company_name(c.Company)
+                                filtered_companies.append(c)
+                    reparsed.companies = filtered_companies
+
+                    filtered_students = []
+                    if reparsed.students:
+                        for s in reparsed.students:
+                            enriched = self.sheet_manager.student_lookup.enrich_student_data(s.Roll_No or '', s.Name or '')
+                            if not enriched.get('Roll No', '').strip().upper().startswith("25/"):
+                                filtered_students.append(s)
+                    reparsed.students = filtered_students
+                    PENDING_PARSES[user_id] = reparsed
+                except Exception as e:
+                    print("Error re-parsing on button callback:", e)
+
+        if user_id not in PENDING_PARSES:
+            await query.edit_message_text("⚠️ No pending parse session found or session expired. Please resend the message.")
             return
 
         if query.data == "cancel_sync":
-            del PENDING_PARSES[user_id]
+            PENDING_PARSES.pop(user_id, None)
+            try:
+                os.remove(f"/tmp/pending_{user_id}.json")
+            except Exception:
+                pass
             await query.edit_message_text("❌ Action cancelled. Sheet was not modified.")
             return
 
@@ -195,7 +237,11 @@ class PlacementBot:
                     if res:
                         added_students.append(res)
 
-            del PENDING_PARSES[user_id]
+            PENDING_PARSES.pop(user_id, None)
+            try:
+                os.remove(f"/tmp/pending_{user_id}.json")
+            except Exception:
+                pass
 
             target_name = "Live Google Sheet" if self.sheet_manager.use_google_sheets else "Local Excel"
             success_text = f"🎉 SUCCESS! Synced to {target_name}!\n\n"
@@ -206,17 +252,22 @@ class PlacementBot:
 
             await query.edit_message_text(success_text)
 
+def create_application(bot: PlacementBot = None):
+    if bot is None:
+        bot = PlacementBot()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", bot.start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    app.add_handler(CallbackQueryHandler(bot.handle_button))
+    return app
+
 def main():
     if not TELEGRAM_BOT_TOKEN:
         print("Error: TELEGRAM_BOT_TOKEN environment variable is not set!")
         return
 
     bot = PlacementBot()
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", bot.start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
-    app.add_handler(CallbackQueryHandler(bot.handle_button))
+    app = create_application(bot)
 
     mode = "Google Sheets (Live)" if bot.sheet_manager.use_google_sheets else "Local Excel"
     print(f"🤖 Telegram Placement Stats Bot running... [Mode: {mode}]")

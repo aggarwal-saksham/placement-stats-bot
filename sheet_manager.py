@@ -10,11 +10,16 @@ class SheetManager:
         self.gspread_client = None
         self.spreadsheet = None
 
-        if google_sheet_credentials and os.path.exists(google_sheet_credentials):
+        if google_sheet_credentials:
             try:
                 import gspread
-                self.gspread_client = gspread.service_account(filename=google_sheet_credentials)
-                if google_sheet_url:
+                import json
+                if os.path.exists(google_sheet_credentials):
+                    self.gspread_client = gspread.service_account(filename=google_sheet_credentials)
+                elif google_sheet_credentials.strip().startswith("{"):
+                    creds_dict = json.loads(google_sheet_credentials)
+                    self.gspread_client = gspread.service_account_from_dict(creds_dict)
+                if self.gspread_client and google_sheet_url:
                     self.spreadsheet = self.gspread_client.open_by_key(google_sheet_url) if "/" not in google_sheet_url else self.gspread_client.open_by_url(google_sheet_url)
                     self.use_google_sheets = True
                     print("Connected to Google Sheets successfully!")
