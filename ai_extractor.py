@@ -85,6 +85,7 @@ Convert unstructured placement text into structured JSON.
       "Name": "Student Name" (or null if unstated),
       "Company": "Company Name",
       "Role": "Job Title" (or null if unstated)
+      "Offer_Type": "6M + PPO" | "6M + FTE" | "FTE" | "PPO"
     }
   ]
 }
@@ -104,6 +105,7 @@ Convert unstructured placement text into structured JSON.
      - Set `Stipend_in_K` to the **UPPER LIMIT** in thousands (e.g. 20.0 for 15,000-20,000/M, 40.0 for 30-40k).
      - You MUST record the original range in `Comments` (e.g. "Stipend: 15,000-20,000 /M").
    - If a range is given for Base, set `Base_in_LPA` to the upper limit and record in `Comments`.
+   -any other info about ctc or stipend if mention in message should also be added to comments.
    - Preserve existing location or other notes in `Comments` alongside the range (e.g. "Location: Noida | CTC: 8-10 LPA | Stipend: 15k-20k/M").
 3. **DEFAULT CGPA CUTOFF**: If CGPA cutoff is not stated in the message, set `"CGPA_criteria": 0.0`.
 4. **Multi-Role Companies**: If a company announcement lists multiple roles (e.g. Software Engineer AND Data Analyst), CREATE SEPARATE COMPANY OBJECTS IN THE ARRAY FOR EACH ROLE with identical CTC/stipend details.
