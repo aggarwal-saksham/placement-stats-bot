@@ -71,118 +71,151 @@ class SheetManager:
         self.refresh_company_matcher()
         self.refresh_student_lookup()
 
+    def append_company_records(self, company_dicts: list) -> list:
+        """
+        Appends multiple Company records in a single batch operation.
+        """
+        if not company_dicts:
+            return []
+
+        rows_to_append = []
+        processed_list = []
+
+        for company_dict in company_dicts:
+            raw_company = company_dict.get('Company', '').strip()
+            exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
+
+            # CGPA criteria defaults to 0.0 if not specified
+            cgpa_crit = company_dict.get('CGPA_criteria')
+            if cgpa_crit is None or str(cgpa_crit).strip().lower() in ['', 'none', 'null', 'nan']:
+                cgpa_crit = 0.0
+
+            # If role missing in company announcement, check if company already exists in Companies sheet
+            role = company_dict.get('Role')
+            if not role or str(role).strip().lower() in ['', 'none', 'null', 'nan']:
+                existing_roles = self.company_matcher.find_roles_for_company(exact_company_name)
+                role = existing_roles[0] if existing_roles else ""
+
+            row_data = [
+                exact_company_name,
+                cgpa_crit,
+                company_dict.get('Offer_Type', 'FTE'),
+                role,
+                company_dict.get('Count'),
+                company_dict.get('CTC_in_LPA'),
+                company_dict.get('Base_in_LPA'),
+                company_dict.get('Stipend_in_K'),
+                company_dict.get('Category', 'TECH'),
+                company_dict.get('Comments', '')
+            ]
+            row_data = ["" if x is None else x for x in row_data]
+            rows_to_append.append(row_data)
+
+            processed = dict(company_dict)
+            processed['Company'] = exact_company_name
+            processed['CGPA_criteria'] = cgpa_crit
+            processed['Role'] = role
+            processed_list.append(processed)
+
+        if rows_to_append:
+            if self.use_google_sheets:
+                sheet = self.spreadsheet.worksheet("Companies")
+                sheet.append_rows(rows_to_append, value_input_option='USER_ENTERED')
+            else:
+                wb = openpyxl.load_workbook(self.excel_path)
+                ws = wb['Companies']
+                for row in rows_to_append:
+                    ws.append(row)
+                wb.save(self.excel_path)
+                wb.close()
+
+            self.refresh_matchers()
+
+        return processed_list
+
     def append_company_record(self, company_dict: dict) -> dict:
+        results = self.append_company_records([company_dict])
+        return results[0] if results else None
+
+    def append_student_records(self, student_dicts: list) -> list:
         """
-        Appends a Company record into Companies sheet.
-        Replaces company name with exact matching name from Companies sheet if present.
-        """
-        raw_company = company_dict.get('Company', '').strip()
-        exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
-
-        # CGPA criteria defaults to 0.0 if not specified
-        cgpa_crit = company_dict.get('CGPA_criteria')
-        if cgpa_crit is None or str(cgpa_crit).strip().lower() in ['', 'none', 'null', 'nan']:
-            cgpa_crit = 0.0
-
-        # If role missing in company announcement, check if company already exists in Companies sheet
-        role = company_dict.get('Role')
-        if not role or str(role).strip().lower() in ['', 'none', 'null', 'nan']:
-            existing_roles = self.company_matcher.find_roles_for_company(exact_company_name)
-            role = existing_roles[0] if existing_roles else ""
-
-        row_data = [
-            exact_company_name,
-            cgpa_crit,
-            company_dict.get('Offer_Type', 'FTE'),
-            role,
-            company_dict.get('Count'),
-            company_dict.get('CTC_in_LPA'),
-            company_dict.get('Base_in_LPA'),
-            company_dict.get('Stipend_in_K'),
-            company_dict.get('Category', 'TECH'),
-            company_dict.get('Comments', '')
-        ]
-
-        if self.use_google_sheets:
-            sheet = self.spreadsheet.worksheet("Companies")
-            sheet.append_row(row_data)
-        else:
-            wb = openpyxl.load_workbook(self.excel_path)
-            ws = wb['Companies']
-            ws.append(row_data)
-            wb.save(self.excel_path)
-            wb.close()
-
-        self.refresh_matchers()
-        processed = dict(company_dict)
-        processed['Company'] = exact_company_name
-        processed['CGPA_criteria'] = cgpa_crit
-        processed['Role'] = role
-        return processed
-
-    def append_student_record(self, student_dict: dict) -> dict:
-        """
-        Appends a Student record into Students sheet.
+        Appends multiple Student records in a single batch operation.
         Ignores roll numbers starting with '25/'.
         Appends ONLY [Roll No, Name, Company, Role, Offer Type].
         """
-        # 1. CGPA_Master Roll No / Name Auto-Lookup & Enrichment
-        enriched = self.student_lookup.enrich_student_data(
-            input_roll=student_dict.get('Roll_No', ''),
-            input_name=student_dict.get('Name', '')
-        )
+        if not student_dicts:
+            return []
 
-        roll_no = enriched.get('Roll No', '').strip().upper()
-        name = enriched.get('Name', '').strip().upper()
+        rows_to_append = []
+        processed_list = []
 
-        # Check rule: Ignore roll numbers starting with 25/
-        if roll_no.startswith("25/"):
-            print(f"Skipping student {name} ({roll_no}) because roll number starts with 25/")
-            return None
+        for student_dict in student_dicts:
+            # 1. CGPA_Master Roll No / Name Auto-Lookup & Enrichment
+            enriched = self.student_lookup.enrich_student_data(
+                input_roll=student_dict.get('Roll_No', ''),
+                input_name=student_dict.get('Name', '')
+            )
 
-        raw_company = student_dict.get('Company', '').strip()
-        exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
+            roll_no = enriched.get('Roll No', '').strip().upper()
+            name = enriched.get('Name', '').strip().upper()
 
-        # 2. Dynamic Role Auto-Fetch from Companies Sheet
-        role = student_dict.get('Role')
-        if not role or str(role).strip().lower() in ['', 'none', 'null', 'nan', 'auto-fetch']:
-            existing_roles = self.company_matcher.find_roles_for_company(exact_company_name)
-            if existing_roles:
-                role = existing_roles[0]  # Auto-fetch exact registered role from Companies sheet!
+            # Check rule: Ignore roll numbers starting with 25/
+            if roll_no.startswith("25/"):
+                print(f"Skipping student {name} ({roll_no}) because roll number starts with 25/")
+                continue
+
+            raw_company = student_dict.get('Company', '').strip()
+            exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
+
+            # 2. Dynamic Role Auto-Fetch from Companies sheet
+            role = student_dict.get('Role')
+            if not role or str(role).strip().lower() in ['', 'none', 'null', 'nan', 'auto-fetch']:
+                existing_roles = self.company_matcher.find_roles_for_company(exact_company_name)
+                if existing_roles:
+                    role = existing_roles[0]
+                else:
+                    role = ""
+
+            offer_type = student_dict.get('Offer_Type', 'FTE') or 'FTE'
+
+            row_data = [
+                roll_no,
+                name,
+                "",                  # CGPA (Auto-filled by ArrayFormula)
+                exact_company_name,  # Exact Company Name matching Companies sheet!
+                role,                # Exact Role matching Companies sheet!
+                offer_type,
+                "",                  # Stipend (Auto-filled by ArrayFormula XLOOKUP)
+                "",                  # CTC (Auto-filled by ArrayFormula XLOOKUP)
+                "",                  # Base (Auto-filled by ArrayFormula XLOOKUP)
+                "",                  # Category (Auto-filled by ArrayFormula XLOOKUP)
+                "",                  # Branch (Auto-filled by Formula)
+                ""                   # Count (Auto-filled by ArrayFormula)
+            ]
+            rows_to_append.append(row_data)
+
+            processed_list.append({
+                'Roll_No': roll_no,
+                'Name': name,
+                'Company': exact_company_name,
+                'Role': role,
+                'Offer_Type': offer_type
+            })
+
+        if rows_to_append:
+            if self.use_google_sheets:
+                sheet = self.spreadsheet.worksheet("Students")
+                sheet.append_rows(rows_to_append, value_input_option='USER_ENTERED')
             else:
-                role = ""  # Leave empty if company not found in Companies sheet yet
+                wb = openpyxl.load_workbook(self.excel_path)
+                ws = wb['Students']
+                for row in rows_to_append:
+                    ws.append(row)
+                wb.save(self.excel_path)
+                wb.close()
 
-        offer_type = student_dict.get('Offer_Type', 'FTE') or 'FTE'
+        return processed_list
 
-        row_data = [
-            roll_no,
-            name,
-            None,                # CGPA (Auto-filled by ArrayFormula)
-            exact_company_name,  # Exact Company Name matching Companies sheet!
-            role,                # Exact Role matching Companies sheet!
-            offer_type,
-            None,                # Stipend (Auto-filled by ArrayFormula XLOOKUP)
-            None,                # CTC (Auto-filled by ArrayFormula XLOOKUP)
-            None,                # Base (Auto-filled by ArrayFormula XLOOKUP)
-            None,                # Category (Auto-filled by ArrayFormula XLOOKUP)
-            None,                # Branch (Auto-filled by Formula)
-            None                 # Count (Auto-filled by ArrayFormula)
-        ]
-
-        if self.use_google_sheets:
-            sheet = self.spreadsheet.worksheet("Students")
-            sheet.append_row(row_data)
-        else:
-            wb = openpyxl.load_workbook(self.excel_path)
-            ws = wb['Students']
-            ws.append(row_data)
-            wb.save(self.excel_path)
-            wb.close()
-
-        return {
-            'Roll_No': roll_no,
-            'Name': name,
-            'Company': exact_company_name,
-            'Role': role,
-            'Offer_Type': offer_type
-        }
+    def append_student_record(self, student_dict: dict) -> dict:
+        results = self.append_student_records([student_dict])
+        return results[0] if results else None

@@ -221,18 +221,17 @@ class PlacementBot:
             added_companies = []
             added_students = []
 
-            # Only append to Companies sheet if company is NEW
+            # Only append to Companies sheet if company is NEW (batch operation)
             if parsed_result.companies:
-                for c in parsed_result.companies:
-                    res = self.sheet_manager.append_company_record(c.model_dump())
-                    added_companies.append(res)
+                added_companies = self.sheet_manager.append_company_records(
+                    [c.model_dump() for c in parsed_result.companies]
+                )
 
-            # Append to Students sheet if student records exist
+            # Append to Students sheet if student records exist (batch operation)
             if parsed_result.students:
-                for s in parsed_result.students:
-                    res = self.sheet_manager.append_student_record(s.model_dump())
-                    if res:
-                        added_students.append(res)
+                added_students = self.sheet_manager.append_student_records(
+                    [s.model_dump() for s in parsed_result.students]
+                )
 
             PENDING_PARSES.pop(user_id, None)
             try:
