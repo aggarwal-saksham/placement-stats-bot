@@ -57,38 +57,22 @@ class CompanyMatcher:
 
     def get_exact_company_name(self, input_company_name):
         """
-        Finds and returns the EXACT string name as stored in the Companies sheet.
-        If 'input_company_name' matches an existing company (exact, case-insensitive, or fuzzy),
-        it returns the exact registered company name from the sheet.
+        Returns the company name.
+        If 'input_company_name' matches an existing company (case-insensitive),
+        it returns the registered casing from the sheet.
+        Otherwise, returns input_company_name verbatim without any fuzzy/substring alterations.
         """
-        if not input_company_name or not self.unique_company_names:
-            return input_company_name.strip() if input_company_name else ""
+        if not input_company_name:
+            return ""
 
         clean_input = input_company_name.strip()
 
-        # 1. Exact case-insensitive match
+        # Exact case-insensitive match only
         for existing in self.unique_company_names:
             if existing.lower() == clean_input.lower():
-                return existing  # Return exact case from sheet
-
-        # 2. Substring / Prefix match (e.g. "NAVI Tech" -> "NAVI", "Unify Apps" -> "UnifyApps")
-        for existing in self.unique_company_names:
-            clean_ex = existing.lower().replace(" ", "")
-            clean_in = clean_input.lower().replace(" ", "")
-            if clean_ex == clean_in or clean_ex in clean_in or clean_in in clean_ex:
                 return existing
 
-        # 3. Fuzzy match
-        if HAS_RAPIDFUZZ:
-            match = process.extractOne(clean_input, self.unique_company_names, scorer=fuzz.WRatio)
-            if match and match[1] >= 75:
-                return match[0]
-        else:
-            matches = difflib.get_close_matches(clean_input, self.unique_company_names, n=1, cutoff=0.65)
-            if matches:
-                return matches[0]
-
-        return clean_input  # Fallback if brand new company
+        return clean_input
 
     def find_roles_for_company(self, company_name):
         """Find all roles registered for a company in Companies sheet."""

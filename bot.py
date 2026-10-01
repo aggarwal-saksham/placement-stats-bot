@@ -81,8 +81,7 @@ class PlacementBot:
                 for c in parsed_result.companies:
                     is_present = self.sheet_manager.company_matcher.is_company_role_present(c.Company, c.Role)
                     if not is_present:
-                        # Normalize company name to exact sheet string if already known under another role
-                        c.Company = self.sheet_manager.company_matcher.get_exact_company_name(c.Company)
+                        c.Company = c.Company.strip()
                         filtered_companies.append(c)
                     else:
                         print(f"Company '{c.Company}' with role '{c.Role}' already exists in Companies sheet. Skipping re-addition.")
@@ -188,7 +187,7 @@ class PlacementBot:
                     if reparsed.companies:
                         for c in reparsed.companies:
                             if not self.sheet_manager.company_matcher.is_company_role_present(c.Company, c.Role):
-                                c.Company = self.sheet_manager.company_matcher.get_exact_company_name(c.Company)
+                                c.Company = c.Company.strip()
                                 filtered_companies.append(c)
                     reparsed.companies = filtered_companies
 

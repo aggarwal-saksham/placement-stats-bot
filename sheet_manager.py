@@ -83,7 +83,7 @@ class SheetManager:
 
         for company_dict in company_dicts:
             raw_company = company_dict.get('Company', '').strip()
-            exact_company_name = self.company_matcher.get_exact_company_name(raw_company)
+            exact_company_name = raw_company
 
             # CGPA criteria defaults to 0.0 if not specified
             cgpa_crit = company_dict.get('CGPA_criteria')
